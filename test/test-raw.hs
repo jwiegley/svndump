@@ -18,4 +18,4 @@ main = do
         then exitSuccess
         else exitFailure
 
--- raw-parser.hs ends here
+-- test-raw.hs ends here

@@ -18,4 +18,4 @@ main = do
         then exitSuccess
         else exitFailure
 
--- raw-parser.hs ends here
+-- test-cooked.hs ends here
