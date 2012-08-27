@@ -93,13 +93,10 @@ nodes), we read them first into the much more general Node structure. -}
 
 {-| Reads a dump file from a ByteString in the IO monad into a list of
     Revision values.  This is the "cooked" parallel of `readSvnDumpRaw`. -}
-readSvnDump :: B.ByteString -> IO [Revision]
+readSvnDump :: B.ByteString -> IO (Either ParseError [Revision])
 readSvnDump io = do
   result <- readSvnDumpRaw io
-  let entries = case result of
-                  Left err -> error (show err)
-                  Right xs -> xs
-  return $ map processRevs (L.groupBy sameRev entries)
+  return $ map processRevs <$> (L.groupBy sameRev <$> result)
 
   where sameRev _ y     = isNothing $
                           L.lookup "Revision-number" (entryTags y)
