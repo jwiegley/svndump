@@ -1,14 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Subversion.Dump
-       ( RevDate(..)
+       ( RevDate
        , Revision(..)
 
        , OpKind(..)
        , OpAction(..)
        , Operation(..)
 
-       , FieldMap(..)
+       , FieldMap
        , Entry(..)
 
        , readSvnDumpRaw
@@ -20,13 +20,13 @@ dump file into a series of data structures representing that same information.
 It uses `Data.ByteString.Lazy` to reading the file, and `Data.Text` to
 represent text fields which may contain Unicode characters. -}
 
-import Debug.Trace
+--import Debug.Trace
 import           Control.Applicative hiding (many, (<|>))
 import           Control.Monad
 import qualified Data.ByteString.Lazy as B
-import qualified Data.ByteString.Lazy.Char8 as BC
+--import qualified Data.ByteString.Lazy.Char8 as BC
 import qualified Data.List as L
-import qualified Data.Map as M
+--import qualified Data.Map as M
 import           Data.Maybe
 import           Data.Text.Lazy hiding (map, count)
 import           Data.Text.Lazy.Encoding as E
@@ -93,7 +93,7 @@ nodes), we read them first into the much more general Node structure. -}
 
 {-| Reads a dump file from a ByteString in the IO monad into a list of
     Revision values.  This is the "cooked" parallel of `readSvnDumpRaw`. -}
-readSvnDump :: IO B.ByteString -> IO [Revision]
+readSvnDump :: B.ByteString -> IO [Revision]
 readSvnDump io = do
   result <- readSvnDumpRaw io
   let entries = case result of
@@ -151,13 +151,10 @@ data Entry = Entry { entryTags  :: FieldMap String
                    , entryBody  :: B.ByteString }
              deriving Show
 
-readSvnDumpRaw :: IO B.ByteString -> IO (Either ParseError [Entry])
-readSvnDumpRaw io = parse parseSvnDump "" <$> io
+readSvnDumpRaw :: B.ByteString -> IO (Either ParseError [Entry])
+readSvnDumpRaw dump = return $ parse parseSvnDump "" dump
 
 {- These are the Parsec parsers for the various parts of the input file. -}
-
-tuplate :: (a -> b) -> (a,a) -> (b,b)
-tuplate f (x,y) = (f x, f y)
 
 parseTag :: PB.Parser (String, String)
 parseTag = (,) <$> fieldKey   <* char ':' <* space
@@ -178,12 +175,11 @@ readTextRange len = do
   setInput $ B.drop (fromIntegral len) input
   return value
 
-readTextRange' :: Integer -> PB.Parser B.ByteString
-readTextRange' len = BC.pack <$> count (fromIntegral len) anyChar
+--readTextRange' :: Integer -> PB.Parser B.ByteString
+--readTextRange' len = BC.pack <$> count (fromIntegral len) anyChar
 
 parseSpecValue :: Char -> PB.Parser Text
 parseSpecValue expected = do
-  pos <- getPosition
   (kind, len) <- parseIndicator
   when (kind /= expected) $ unexpected "Unexpected spec value char"
   value <- readTextRange len
@@ -226,21 +222,5 @@ parseSvnDump = parseHeader >> many parseEntry
 
 parseDate :: Text -> RevDate
 parseDate = id
-
-{-| Convert a list of Revisions to a mapping of revision numbers to in-memory
-file trees.  This can consume a *lot* of memory. -}
-
-type FileTree = M.Map FilePath (Maybe B.ByteString)
-
-processRevision :: [Revision] -> M.Map Int FileTree
-processRevision revs = M.fromList $ map buildTree revs
-  where buildTree r = (revNumber r, makeTree r)
-        makeTree r  = M.fromList $ map enterPath (revOperations r)
-        enterPath o = (opPathname o,
-                       case opKind o of
-                         Directory -> Nothing
-                         File      -> Just (opContents o))
-
--- readSvnDumpRaw (B.readFile "/Users/johnw/Mirrors/Boost/boost.svnrepo.dump") >>= return . fmap L.length
 
 -- SvnDump.hs ends here
