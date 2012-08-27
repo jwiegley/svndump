@@ -11,22 +11,15 @@ module Subversion.Dump
        , FieldMap
        , Entry(..)
 
-       , readSvnDumpRaw
        , readSvnDump
+       , readSvnDumpRaw
        ) where
 
-{-| This is a parser for Subversion dump files.  The objective is to convert a
-dump file into a series of data structures representing that same information.
-It uses `Data.ByteString.Lazy` to reading the file, and `Data.Text` to
-represent text fields which may contain Unicode characters. -}
-
---import Debug.Trace
 import           Control.Applicative hiding (many, (<|>))
 import           Control.Monad
 import qualified Data.ByteString.Lazy as B
 --import qualified Data.ByteString.Lazy.Char8 as BC
 import qualified Data.List as L
---import qualified Data.Map as M
 import           Data.Maybe
 import           Data.Text.Lazy hiding (map, count)
 import           Data.Text.Lazy.Encoding as E
@@ -38,10 +31,15 @@ import           Prelude hiding (getContents)
 
 default (Data.Text.Lazy.Text)
 
-{- At the topmost level, a dump file is simple an in-order, linear list of
-revisions, where each revisions consist of a series of "operation nodes" that
-represent the changes made by that revision to the repository.  The author
-name and revision comment are decoded from UTF8. -}
+-- | A parser for Subversion dump files.  The objective is to convert a dump
+--   file into a series of data structures representing that same information.
+--   It uses 'Data.ByteString.Lazy' to reading the file, and 'Data.Text' to
+--   represent text fields which may contain Unicode characters.
+
+-- At the topmost level, a dump file is simple an in-order, linear list of
+-- revisions, where each revisions consist of a series of "operation nodes"
+-- that represent the changes made by that revision to the repository.  The
+-- author name and revision comment are decoded from UTF8.
 
 type RevDate = Text
 
@@ -52,17 +50,18 @@ data Revision = Revision { revNumber     :: Int
                          , revOperations :: [Operation] }
               deriving Show
 
-{- Each node reflects the changes to a single file.  Note that branches don't
-need to be considered separately, since in Subversion, all files are stored
-within a single filesystem.  Branches are something the user applies "after
-the fact" by using specially named paths, such as "foo/branches".  The file's
-contents are not decoded, as we have no way of knowing what the intended
-encoding should be -- or even if there is in, in the case of binary files.
-
-`opContentLength` is provided as a separate member to avoid reading in the
-full contents of the operation solely to determine its length.  This way, you
-can inspect the length while deferring the content read if you don't need
-it. -}
+-- Each node reflects the changes to a single file.  Note that branches don't
+-- need to be considered separately, since in Subversion, all files are stored
+-- within a single filesystem.  Branches are something the user applies "after
+-- the fact" by using specially named paths, such as "foo/branches".  The
+-- file's contents are not decoded, as we have no way of knowing what the
+-- intended encoding should be -- or even if there is in, in the case of
+-- binary files.
+--
+-- 'opContentLength' is provided as a separate member to avoid reading in the
+-- full contents of the operation solely to determine its length.  This way,
+-- you can inspect the length while deferring the content read if you don't
+-- need it.
 
 data OpKind   = File | Directory deriving (Show, Enum, Eq)
 data OpAction = Add | Change | Replace | Delete deriving (Show, Enum, Eq)
@@ -78,21 +77,22 @@ data Operation = Operation { opKind          :: OpKind
                            , opCopyFromPath  :: Maybe FilePath }
                deriving Show
 
-{- A further note is needed on `opCopyFromRev` and `opCopyFromPath`, since these
-two represent the only real complexity in a dump file.  Basically what they
-say is that there is no `opContents` record for this `Operation`.  Rather, the
-contents to be taken from another file in a past revision.  Since this
-historical information would be expensive to maintain, `Operation` only
-provides the data given by the dump file, and it is left as an analytical pass
-on this data to build the structures necessary to figure out what those
-contents would have been.
+-- A further note is needed on 'opCopyFromRev' and 'opCopyFromPath', since
+-- these two represent the only real complexity in a dump file.  Basically
+-- what they say is that there is no 'opContents' record for this 'Operation'.
+-- Rather, the contents to be taken from another file in a past revision.
+-- Since this historical information would be expensive to maintain,
+-- 'Operation' only provides the data given by the dump file, and it is left
+-- as an analytical pass on this data to build the structures necessary to
+-- figure out what those contents would have been.
+--
+-- So, with our structures defined, we're ready to read in the file.  Since we
+-- don't know what each element will be yet (revisions are interspersed with
+-- nodes), we read them first into the much more general Node structure.
 
-So, with our structures defined, we're ready to read in the file.  Since we
-don't know what each element will be yet (revisions are interspersed with
-nodes), we read them first into the much more general Node structure. -}
+-- | Reads a dump file from a ByteString in the IO monad into a list of
+--   Revision values.  This is the "cooked" parallel of 'readSvnDumpRaw'.
 
-{-| Reads a dump file from a ByteString in the IO monad into a list of
-    Revision values.  This is the "cooked" parallel of `readSvnDumpRaw`. -}
 readSvnDump :: B.ByteString -> IO (Either ParseError [Revision])
 readSvnDump io = do
   result <- readSvnDumpRaw io
@@ -151,7 +151,7 @@ data Entry = Entry { entryTags  :: FieldMap String
 readSvnDumpRaw :: B.ByteString -> IO (Either ParseError [Entry])
 readSvnDumpRaw dump = return $ parse parseSvnDump "" dump
 
-{- These are the Parsec parsers for the various parts of the input file. -}
+-- These are the Parsec parsers for the various parts of the input file.
 
 parseTag :: PB.Parser (String, String)
 parseTag = (,) <$> fieldKey   <* char ':' <* space
