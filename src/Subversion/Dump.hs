@@ -64,7 +64,7 @@ data OpAction = Add | Change | Replace | Delete deriving (Show, Enum, Eq)
 data Operation = Operation { opKind          :: OpKind
                            , opAction        :: OpAction
                            , opPathname      :: FilePath
-                           , opContents      :: ByteString
+                           , opContents      :: BL.ByteString
                            , opContentLength :: Int
                            , opChecksumMD5   :: Maybe Text
                            , opChecksumSHA1  :: Maybe Text

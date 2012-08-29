@@ -27,7 +27,7 @@ type FieldMap = [(ByteString, ByteString)]
 
 data Entry = Entry { entryTags  :: FieldMap
                    , entryProps :: FieldMap
-                   , entryBody  :: ByteString }
+                   , entryBody  :: BL.ByteString }
            deriving Show
 
 readSvnDumpRaw :: BL.ByteString -> [Entry]
@@ -39,16 +39,18 @@ readSvnDumpRaw dump =
 parseDumpFile :: BL.ByteString -> [Entry]
 parseDumpFile contents =
   case parse parseEntry contents of
-    Fail {}              -> []
-    Done contents' entry -> entry : parseDumpFile contents'
+    Fail {} -> []
+    Done contents' (entry, bodyLen) ->
+        entry { entryBody = BL.take (fromIntegral bodyLen) contents' }
+      : parseDumpFile (BL.drop (fromIntegral bodyLen) contents')
 
 -- These are the Parsec parsers for the various parts of the input file.
 
 space :: Parser Word8
-space = satisfy (== 32)
+space = word8 32
 
 newline :: Parser Word8
-newline = satisfy (== 10)
+newline = word8 10
 
 parseTag :: Parser (ByteString, ByteString)
 parseTag =
@@ -74,23 +76,22 @@ parseProperty :: Parser (ByteString, ByteString)
 parseProperty = (,) <$> parseSpecValue -- K
                     <*> parseSpecValue -- V
 
-parseEntry :: Parser Entry
+parseEntry :: Parser (Entry, Int)
 parseEntry = do
-  fields <- many1 parseTag <* newline
+  fields  <- AL.takeWhile (== 10) *> many1 parseTag <* newline
+  props   <- case L.lookup "Prop-content-length" fields of
+               Nothing -> return []
+               Just _  -> manyTill parseProperty (try (string "PROPS-END\n"))
 
-  props  <- case L.lookup "Prop-content-length" fields of
-              Nothing -> return []
-              Just _  -> manyTill parseProperty (try (string "PROPS-END\n"))
+  -- Don't read the body here in AttoParsec, let the caller extract it from
+  -- the ByteString (which might be lazy, saving us from strictifying it in
+  -- AttoParsec).
+  let bodyLen = fromMaybe 0 (readInt <$> L.lookup "Text-content-length" fields)
 
-  body   <- case L.lookup "Text-content-length" fields of
-              Nothing  -> return B.empty
-              Just len -> AL.take (readInt len)
-
-  _ <- AL.takeWhile (== 10)
-
-  return Entry { entryTags  = fields
-               , entryProps = props
-               , entryBody  = body }
+  return ( Entry { entryTags  = fields
+                 , entryProps = props
+                 , entryBody  = BL.empty }
+         , bodyLen )
 
 parseHeader :: Parser ByteString
 parseHeader = do

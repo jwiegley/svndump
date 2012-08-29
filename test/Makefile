@@ -35,4 +35,11 @@ $(TESTRAW): test-raw.hs
 	(cd ..; cabal configure --enable-tests)
 	(cd ..; cabal build)
 
+prof: $(TESTRAW)
+	@echo "=== Haskell profiled straight raw scan (all contents read) ==="
+	@$(TIME) $(TESTRAW) $(DATA) +RTS -p -hc -stest-raw.summary
+
+clean:
+	rm -f test-raw *.aux *.hi *.hp *.o *.prof *.ps *.summary
+
 ### Makefile ends here
