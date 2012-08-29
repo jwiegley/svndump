@@ -8,28 +8,23 @@ module Subversion.Dump
        , OpAction(..)
        , Operation(..)
 
-       , FieldMap
-       , Entry(..)
-
        , readSvnDump
-       , readSvnDumpRaw
        ) where
 
-import           Control.Applicative hiding (many, (<|>))
-import           Control.Monad
-import qualified Data.ByteString.Lazy as B
---import qualified Data.ByteString.Lazy.Char8 as BC
+import           Control.Applicative hiding (many)
+import           Data.ByteString as B hiding (map)
+import qualified Data.ByteString.Char8 as BC hiding (map)
+import qualified Data.ByteString.Lazy as BL hiding (map)
 import qualified Data.List as L
+import           Data.Text (Text)
+import qualified Data.Text.Encoding as E
 import           Data.Maybe
-import           Data.Text.Lazy hiding (map, count)
-import           Data.Text.Lazy.Encoding as E
-import           System.FilePath
-import           Text.Parsec
-import           Text.Parsec.ByteString.Lazy as PB
+
+import           Subversion.Dump.Raw
 
 import           Prelude hiding (getContents)
 
-default (Data.Text.Lazy.Text)
+default (ByteString)
 
 -- | A parser for Subversion dump files.  The objective is to convert a dump
 --   file into a series of data structures representing that same information.
@@ -69,10 +64,10 @@ data OpAction = Add | Change | Replace | Delete deriving (Show, Enum, Eq)
 data Operation = Operation { opKind          :: OpKind
                            , opAction        :: OpAction
                            , opPathname      :: FilePath
-                           , opContents      :: B.ByteString
+                           , opContents      :: ByteString
                            , opContentLength :: Int
-                           , opChecksumMD5   :: Maybe String
-                           , opChecksumSHA1  :: Maybe String
+                           , opChecksumMD5   :: Maybe Text
+                           , opChecksumSHA1  :: Maybe Text
                            , opCopyFromRev   :: Maybe Int
                            , opCopyFromPath  :: Maybe FilePath }
                deriving Show
@@ -93,11 +88,8 @@ data Operation = Operation { opKind          :: OpKind
 -- | Reads a dump file from a ByteString in the IO monad into a list of
 --   Revision values.  This is the "cooked" parallel of 'readSvnDumpRaw'.
 
-readSvnDump :: B.ByteString -> IO (Either ParseError [Revision])
-readSvnDump io = do
-  result <- readSvnDumpRaw io
-  return $ map processRevs <$> (L.groupBy sameRev <$> result)
-
+readSvnDump :: BL.ByteString -> [Revision]
+readSvnDump dump = map processRevs $ L.groupBy sameRev $ readSvnDumpRaw dump
   where sameRev _ y     = isNothing $
                           L.lookup "Revision-number" (entryTags y)
         getField f n x  = L.lookup n (f x)
@@ -110,24 +102,24 @@ readSvnDump io = do
         processRevs [] = error "Unexpected"
         processRevs (rev:ops) =
           Revision {
-              revNumber     = read $ tag "Revision-number" rev
+              revNumber     = readInt $ tag "Revision-number" rev
             , revDate       = parseDate $ prop "svn:date" rev
-            , revAuthor     = propM "svn:author" rev
-            , revComment    = propM "svn:log" rev
+            , revAuthor     = E.decodeUtf8 <$> propM "svn:author" rev
+            , revComment    = E.decodeUtf8 <$> propM "svn:log" rev
             , revOperations = map processOp ops }
 
         processOp op =
           Operation {
               opKind          = getOpKind $ tag "Node-kind" op
             , opAction        = getOpAction $ tag "Node-action" op
-            , opPathname      = tag "Node-path" op
+            , opPathname      = BC.unpack $ tag "Node-path" op
             , opContents      = entryBody op
-            , opContentLength = read $ tag "Text-content-length" op
-            , opCopyFromRev   = read <$>
+            , opContentLength = readInt $ tag "Text-content-length" op
+            , opCopyFromRev   = readInt <$>
                                 tagM "Node-copyfrom-rev" op
-            , opCopyFromPath  = tagM "Node-copyfrom-path" op
-            , opChecksumMD5   = tagM "Text-content-md5" op
-            , opChecksumSHA1  = tagM "Text-content-sha1" op }
+            , opCopyFromPath  = BC.unpack <$> tagM "Node-copyfrom-path" op
+            , opChecksumMD5   = E.decodeUtf8 <$> tagM "Text-content-md5" op
+            , opChecksumSHA1  = E.decodeUtf8 <$> tagM "Text-content-sha1" op }
 
         getOpKind kind = case kind of
           "file" -> File
@@ -140,84 +132,8 @@ readSvnDump io = do
           "change"  -> Change
           "replace" -> Replace
           _      -> error "Unexpected"
-
-type FieldMap a = [(String, a)]
 
-data Entry = Entry { entryTags  :: FieldMap String
-                   , entryProps :: FieldMap Text
-                   , entryBody  :: B.ByteString }
-             deriving Show
+parseDate :: ByteString -> RevDate
+parseDate = E.decodeUtf8
 
-readSvnDumpRaw :: B.ByteString -> IO (Either ParseError [Entry])
-readSvnDumpRaw dump = return $ parse parseSvnDump "" dump
-
--- These are the Parsec parsers for the various parts of the input file.
-
-parseTag :: PB.Parser (String, String)
-parseTag = (,) <$> fieldKey   <* char ':' <* space
-               <*> fieldValue <* newline
-  where
-    fieldKey   = (:) <$> letter <*> many fieldChar
-    fieldChar  = letter <|> digit <|> oneOf "-_"
-    fieldValue = many1 (noneOf "\n")
-
-parseIndicator :: PB.Parser (Char, Integer)
-parseIndicator = (,) <$> oneOf "KV" <* space
-                     <*> (read <$> many1 digit <* newline)
-
-readTextRange :: Integer -> PB.Parser B.ByteString
-readTextRange len = do
-  input <- getInput
-  let value = B.take (fromIntegral len) input
-  setInput $ B.drop (fromIntegral len) input
-  return value
-
---readTextRange' :: Integer -> PB.Parser B.ByteString
---readTextRange' len = BC.pack <$> count (fromIntegral len) anyChar
-
-parseSpecValue :: Char -> PB.Parser Text
-parseSpecValue expected = do
-  (kind, len) <- parseIndicator
-  when (kind /= expected) $ unexpected "Unexpected spec value char"
-  value <- readTextRange len
-  --trace ("Value: " ++ (show value)) $ return ()
-  _ <- newline
-  return $ E.decodeUtf8 value
-
-parseProperty :: PB.Parser (String, Text)
-parseProperty = (,) <$> (unpack <$> parseSpecValue 'K')
-                    <*> parseSpecValue 'V'
-
-parseEntry :: PB.Parser Entry
-parseEntry = do
-  fields <- many1 parseTag <* newline
-
-  props  <- case L.lookup "Prop-content-length" fields of
-              Nothing -> return []
-              Just _  -> many parseProperty <* string "PROPS-END\n"
-
-  body   <- case L.lookup "Text-content-length" fields of
-              Nothing  -> return B.empty
-              Just len -> readTextRange (read len)
-
-  _ <- many newline <?> "entry-terminating newline"
-
-  return Entry { entryTags  = fields
-               , entryProps = props
-               , entryBody  = body }
-
-parseHeader :: PB.Parser ()
-parseHeader = do
-  _ <- string "SVN-fs-dump-format-version: 2\n\n"
-       <?> "Dump file starts without a recognizable tag"
-  _ <- string "UUID: " <* many1 (hexDigit <|> char '-')
-       <* newline <* newline
-  return ()
-
-parseSvnDump :: PB.Parser [Entry]
-parseSvnDump = parseHeader >> many parseEntry
-
-parseDate :: Text -> RevDate
-parseDate = id
-
--- SvnDump.hs ends here
+-- Dump.hs ends here

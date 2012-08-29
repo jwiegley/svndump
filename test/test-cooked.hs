@@ -8,14 +8,10 @@ import           System.Exit
 main :: IO ()
 main = do
   file <- B.readFile "data/cunit.dump.gz"
-  dump <- readSvnDump $ GZip.decompress file
-  case dump of
-    Left _   -> exitFailure
-    Right xs -> do
-      let len = length xs
-      putStrLn $ show len ++ " cooked entries found, expecting 157"
-      if len == 157
-        then exitSuccess
-        else exitFailure
+  let len = length $ readSvnDump (GZip.decompress file)
+  putStrLn $ show len ++ " cooked entries found, expecting 157"
+  if len == 157
+    then exitSuccess
+    else exitFailure
 
 -- test-cooked.hs ends here
