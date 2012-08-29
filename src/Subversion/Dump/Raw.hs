@@ -75,6 +75,11 @@ parseProperty :: Parser (ByteString, ByteString)
 parseProperty = (,) <$> parseSpecValue -- K
                     <*> parseSpecValue -- V
 
+-- | Efficiently convert a ByteString of integers into an Int.
+--
+--   >>> readInt (Data.ByteString.Char8.pack "12345")
+--   12345
+
 readInt :: ByteString -> Int
 readInt bs = B.foldl' addup 0 bs
   where addup acc x = acc * 10 + (fromIntegral x - 48) -- '0'
