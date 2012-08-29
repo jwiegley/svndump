@@ -33,15 +33,14 @@ data Entry = Entry { entryTags  :: FieldMap
 readSvnDumpRaw :: BL.ByteString -> [Entry]
 readSvnDumpRaw dump =
   case parse parseHeader dump of
-    Fail _ _ _      -> error "Stream is not a Subversion dump file"
+    Fail {}         -> error "Stream is not a Subversion dump file"
     Done contents _ -> parseDumpFile contents
 
 parseDumpFile :: BL.ByteString -> [Entry]
-parseDumpFile contents = do
+parseDumpFile contents =
   case parse parseEntry contents of
-    Fail _ _ _ -> []
-    Done contents' entry -> do
-      entry : parseDumpFile contents'
+    Fail {}              -> []
+    Done contents' entry -> entry : parseDumpFile contents'
 
 -- These are the Parsec parsers for the various parts of the input file.
 
@@ -75,15 +74,6 @@ parseProperty :: Parser (ByteString, ByteString)
 parseProperty = (,) <$> parseSpecValue -- K
                     <*> parseSpecValue -- V
 
--- | Efficiently convert a ByteString of integers into an Int.
---
---   >>> readInt (Data.ByteString.Char8.pack "12345")
---   12345
-
-readInt :: ByteString -> Int
-readInt bs = B.foldl' addup 0 bs
-  where addup acc x = acc * 10 + (fromIntegral x - 48) -- '0'
-
 parseEntry :: Parser Entry
 parseEntry = do
   fields <- many1 parseTag <* newline
@@ -111,5 +101,14 @@ parseHeader = do
   where
     -- Accept any hexadecimal character, or '-'
     uuidMember w = w == 45 || (w >= 48 && w <= 57) || (w >= 97 && w <= 102)
+
+-- | Efficiently convert a ByteString of integers into an Int.
+--
+--   >>> readInt (Data.ByteString.Char8.pack "12345")
+--   12345
+
+readInt :: ByteString -> Int
+readInt = B.foldl' addup 0
+  where addup acc x = acc * 10 + (fromIntegral x - 48) -- '0'
 
 -- SvnDump.hs ends here
