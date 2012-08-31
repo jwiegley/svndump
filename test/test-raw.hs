@@ -19,7 +19,7 @@ main = do
         else exitFailure
 
     (fileName:_) -> do
-      contents   <- B.readFile fileName
+      contents <- B.readFile fileName
       print $ length $ readSvnDumpRaw contents
 
 -- test-raw.hs ends here
