@@ -42,7 +42,7 @@ library
     Subversion.Dump
     Subversion.Dump.Raw
 
-  ghc-options: -Wall -fwarn-tabs -O2
+  ghc-options: -Wall -fwarn-tabs -O
   hs-source-dirs: src
 
 -- Verify the results of the examples
