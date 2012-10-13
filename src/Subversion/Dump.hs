@@ -16,13 +16,14 @@ import           Data.ByteString as B hiding (map)
 import qualified Data.ByteString.Char8 as BC hiding (map)
 import qualified Data.ByteString.Lazy as BL hiding (map)
 import qualified Data.List as L
+import           Data.Maybe
 import           Data.Text (Text)
 import qualified Data.Text.Encoding as E
-import           Data.Maybe
-
-import           Subversion.Dump.Raw
+import           Data.Time
+import           System.Locale
 
 import           Prelude hiding (getContents)
+import           Subversion.Dump.Raw
 
 default (ByteString)
 
@@ -36,7 +37,7 @@ default (ByteString)
 -- that represent the changes made by that revision to the repository.  The
 -- author name and revision comment are decoded from UTF8.
 
-type RevDate = Text
+type RevDate = UTCTime
 
 data Revision = Revision { revNumber     :: Int
                          , revDate       :: RevDate
@@ -58,8 +59,10 @@ data Revision = Revision { revNumber     :: Int
 -- you can inspect the length while deferring the content read if you don't
 -- need it.
 
-data OpKind   = File | Directory deriving (Show, Enum, Eq)
-data OpAction = Add | Change | Replace | Delete deriving (Show, Enum, Eq)
+data OpKind   = NoKind | File | Directory
+              deriving (Show, Enum, Eq)
+data OpAction = NoAction | Add | Change | Replace | Delete
+              deriving (Show, Enum, Eq)
 
 data Operation = Operation { opKind          :: OpKind
                            , opAction        :: OpAction
@@ -90,50 +93,55 @@ data Operation = Operation { opKind          :: OpKind
 
 readSvnDump :: BL.ByteString -> [Revision]
 readSvnDump dump = map processRevs $ L.groupBy sameRev $ readSvnDumpRaw dump
-  where sameRev _ y     = isNothing $
-                          L.lookup "Revision-number" (entryTags y)
-        getField f n x  = L.lookup n (f x)
-        getField' f n x = fromMaybe "" (getField f n x)
-        tagM            = getField entryTags
-        propM           = getField entryProps
-        tag             = getField' entryTags
-        prop            = getField' entryProps
+  where
+    sameRev _ y     = isNothing $
+                      L.lookup "Revision-number" (entryTags y)
+    getField f n x  = L.lookup n (f x)
+    getField' f n x = fromMaybe "" (getField f n x)
+    tagM            = getField entryTags
+    propM           = getField entryProps
+    tag             = getField' entryTags
+    prop            = getField' entryProps
 
-        processRevs [] = error "Unexpected"
-        processRevs (rev:ops) =
-          Revision {
-              revNumber     = readInt $ tag "Revision-number" rev
-            , revDate       = parseDate $ prop "svn:date" rev
-            , revAuthor     = E.decodeUtf8 <$> propM "svn:author" rev
-            , revComment    = E.decodeUtf8 <$> propM "svn:log" rev
-            , revOperations = map processOp ops }
+    processRevs [] = error "Unexpected: Empty revision list"
+    processRevs (rev:ops) =
+      Revision {
+          revNumber     = readInt $ tag "Revision-number" rev
+        , revDate       = parseDate $ prop "svn:date" rev
+        , revAuthor     = E.decodeUtf8 <$> propM "svn:author" rev
+        , revComment    = E.decodeUtf8 <$> propM "svn:log" rev
+        , revOperations = map processOp ops }
 
-        processOp op =
-          Operation {
-              opKind          = getOpKind $ tag "Node-kind" op
-            , opAction        = getOpAction $ tag "Node-action" op
-            , opPathname      = BC.unpack $ tag "Node-path" op
-            , opContents      = entryBody op
-            , opContentLength = readInt $ tag "Text-content-length" op
-            , opCopyFromRev   = readInt <$>
-                                tagM "Node-copyfrom-rev" op
-            , opCopyFromPath  = BC.unpack <$> tagM "Node-copyfrom-path" op
-            , opChecksumMD5   = E.decodeUtf8 <$> tagM "Text-content-md5" op
-            , opChecksumSHA1  = E.decodeUtf8 <$> tagM "Text-content-sha1" op }
+    processOp op =
+      Operation {
+          opKind          = getOpKind $ tag "Node-kind" op
+        , opAction        = getOpAction $ tag "Node-action" op
+        , opPathname      = BC.unpack $ tag "Node-path" op
+        , opContents      = entryBody op
+        , opContentLength = readInt $ tag "Text-content-length" op
+        , opCopyFromRev   = readInt <$>
+                            tagM "Node-copyfrom-rev" op
+        , opCopyFromPath  = BC.unpack <$> tagM "Node-copyfrom-path" op
+        , opChecksumMD5   = E.decodeUtf8 <$> tagM "Text-content-md5" op
+        , opChecksumSHA1  = E.decodeUtf8 <$> tagM "Text-content-sha1" op }
 
-        getOpKind kind = case kind of
-          "file" -> File
-          "dir"  -> Directory
-          _      -> error "Unexpected"
+    getOpKind kind = case kind of
+      "file" -> File
+      "dir"  -> Directory
+      ""     -> NoKind
+      _      -> error $ "Unexpected operation kind: " ++ show kind
 
-        getOpAction kind = case kind of
-          "add"     -> Add
-          "delete"  -> Delete
-          "change"  -> Change
-          "replace" -> Replace
-          _      -> error "Unexpected"
+    getOpAction kind = case kind of
+      "add"     -> Add
+      "delete"  -> Delete
+      "change"  -> Change
+      "replace" -> Replace
+      ""        -> NoAction
+      _         -> error $ "Unexpected operation action: " ++ show kind
 
 parseDate :: ByteString -> RevDate
-parseDate = E.decodeUtf8
+parseDate bs = readTime defaultTimeLocale
+                        (BC.unpack "%Y-%m-%dT%H:%M:%S%QZ")
+                        (BC.unpack bs)
 
 -- Dump.hs ends here
